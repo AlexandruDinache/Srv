@@ -1,0 +1,116 @@
+#!/bin/bash
+
+FIREWALL_ALLOW_UDP_PORTS_IN=${FIREWALL_ALLOW_UDP_PORTS_IN:-}
+FIREWALL_ALLOW_TCP_PORTS_IN=${FIREWALL_ALLOW_TCP_PORTS_IN:-25,80,110,143,443,465,587,993,995,5222,5223,7071,9922,8443}
+FIREWALL_ALLOW_SAFE_NETS=${SAFE_NETS:-0.0.0.0/0}
+
+iptables -P INPUT ACCEPT
+iptables -P FORWARD ACCEPT
+iptables -P OUTPUT ACCEPT
+iptables -t nat -F
+iptables -t mangle -F
+iptables -F
+iptables -X
+
+ip6tables -P INPUT ACCEPT
+ip6tables -P FORWARD ACCEPT
+ip6tables -P OUTPUT ACCEPT
+ip6tables -t nat -F
+ip6tables -t mangle -F
+ip6tables -F
+ip6tables -X
+
+ip6tables -t raw    -A PREROUTING  -m rt --rt-type 0 -j DROP
+ip6tables -t mangle -A POSTROUTING -m rt --rt-type 0 -j DROP
+
+iptables  -t raw -A PREROUTING ! -i lo -s 127.0.0.0/8 -j DROP
+ip6tables -t raw -A PREROUTING ! -i lo -s ::1/128     -j DROP
+
+iptables  -t raw -A PREROUTING -p tcp --tcp-flags ACK,FIN FIN                 -j DROP
+iptables  -t raw -A PREROUTING -p tcp --tcp-flags ACK,PSH PSH                 -j DROP
+iptables  -t raw -A PREROUTING -p tcp --tcp-flags ACK,URG URG                 -j DROP
+iptables  -t raw -A PREROUTING -p tcp --tcp-flags FIN,RST FIN,RST             -j DROP
+iptables  -t raw -A PREROUTING -p tcp --tcp-flags SYN,FIN SYN,FIN             -j DROP
+iptables  -t raw -A PREROUTING -p tcp --tcp-flags SYN,RST SYN,RST             -j DROP
+iptables  -t raw -A PREROUTING -p tcp --tcp-flags ALL     ALL                 -j DROP
+iptables  -t raw -A PREROUTING -p tcp --tcp-flags ALL     NONE                -j DROP
+iptables  -t raw -A PREROUTING -p tcp --tcp-flags ALL     FIN,PSH,URG         -j DROP
+iptables  -t raw -A PREROUTING -p tcp --tcp-flags ALL     SYN,FIN,PSH,URG     -j DROP
+iptables  -t raw -A PREROUTING -p tcp --tcp-flags ALL     SYN,RST,ACK,FIN,URG -j DROP
+ip6tables -t raw -A PREROUTING -p tcp --tcp-flags ACK,FIN FIN                 -j DROP
+ip6tables -t raw -A PREROUTING -p tcp --tcp-flags ACK,PSH PSH                 -j DROP
+ip6tables -t raw -A PREROUTING -p tcp --tcp-flags ACK,URG URG                 -j DROP
+ip6tables -t raw -A PREROUTING -p tcp --tcp-flags FIN,RST FIN,RST             -j DROP
+ip6tables -t raw -A PREROUTING -p tcp --tcp-flags SYN,FIN SYN,FIN             -j DROP
+ip6tables -t raw -A PREROUTING -p tcp --tcp-flags SYN,RST SYN,RST             -j DROP
+ip6tables -t raw -A PREROUTING -p tcp --tcp-flags ALL     ALL                 -j DROP
+ip6tables -t raw -A PREROUTING -p tcp --tcp-flags ALL     NONE                -j DROP
+ip6tables -t raw -A PREROUTING -p tcp --tcp-flags ALL     FIN,PSH,URG         -j DROP
+ip6tables -t raw -A PREROUTING -p tcp --tcp-flags ALL     SYN,FIN,PSH,URG     -j DROP
+ip6tables -t raw -A PREROUTING -p tcp --tcp-flags ALL     SYN,RST,ACK,FIN,URG -j DROP
+
+iptables  -t mangle -A PREROUTING -m conntrack --ctstate INVALID -j DROP
+ip6tables -t mangle -A PREROUTING -m conntrack --ctstate INVALID -j DROP
+
+iptables  -t mangle -A PREROUTING -p tcp ! --syn -m conntrack --ctstate NEW -j DROP
+ip6tables -t mangle -A PREROUTING -p tcp ! --syn -m conntrack --ctstate NEW -j DROP
+
+iptables  -A INPUT -i lo -j ACCEPT
+ip6tables -A INPUT -i lo -j ACCEPT
+
+iptables  -A INPUT -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
+ip6tables -A INPUT -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
+
+while IFS=',' read -ra PORTS; do
+    for port in "${PORTS[@]}"; do
+        if [ $port = "7071" ] || [ $port = "9922" ]; then
+            while IFC=',' read -ra IPS; do
+                for ips in "${IPS[@]}"; do
+                     iptables -A INPUT --src $ips -p tcp --dport $port -j ACCEPT
+                done
+            done <<< "$FIREWALL_ALLOW_SAFE_NETS"
+        else
+         iptables -A INPUT -p tcp --dport $port -j ACCEPT
+         ip6tables -A INPUT -p tcp --dport $port -j ACCEPT
+        fi
+    done
+done <<< "$FIREWALL_ALLOW_TCP_PORTS_IN"
+
+while IFS=',' read -ra PORTS; do
+    for port in "${PORTS[@]}"; do
+         iptables -A INPUT -p udp --dport $port -j ACCEPT
+         ip6tables -A INPUT -p udp --dport $port -j ACCEPT
+    done
+done <<< "$FIREWALL_ALLOW_UDP_PORTS_IN"
+
+iptables -N AllowICMP
+iptables -A AllowICMP -p icmp --icmp-type 0  -j ACCEPT
+iptables -A AllowICMP -p icmp --icmp-type 3  -j ACCEPT
+iptables -A AllowICMP -p icmp --icmp-type 8  -j ACCEPT -m limit --limit 5/sec --limit-burst 10
+iptables -A AllowICMP -p icmp --icmp-type 11 -j ACCEPT
+iptables -A AllowICMP -p icmp --icmp-type 12 -j ACCEPT
+iptables -A AllowICMP -j DROP
+iptables -A INPUT -p icmp -j AllowICMP
+
+ip6tables -N AllowICMP
+ip6tables -A AllowICMP -p icmpv6 --icmpv6-type 1   -j ACCEPT
+ip6tables -A AllowICMP -p icmpv6 --icmpv6-type 2   -j ACCEPT
+ip6tables -A AllowICMP -p icmpv6 --icmpv6-type 3   -j ACCEPT
+ip6tables -A AllowICMP -p icmpv6 --icmpv6-type 4   -j ACCEPT
+ip6tables -A AllowICMP -p icmpv6 --icmpv6-type 128 -j ACCEPT -m limit --limit 5/sec --limit-burst 10
+ip6tables -A AllowICMP -p icmpv6 --icmpv6-type 129 -j ACCEPT
+ip6tables -A AllowICMP -p icmpv6 --icmpv6-type 130 -j ACCEPT
+ip6tables -A AllowICMP -p icmpv6 --icmpv6-type 131 -j ACCEPT
+ip6tables -A AllowICMP -p icmpv6 --icmpv6-type 132 -j ACCEPT
+ip6tables -A AllowICMP -p icmpv6 --icmpv6-type 133 -j ACCEPT
+ip6tables -A AllowICMP -p icmpv6 --icmpv6-type 134 -j ACCEPT
+ip6tables -A AllowICMP -p icmpv6 --icmpv6-type 135 -j ACCEPT
+ip6tables -A AllowICMP -p icmpv6 --icmpv6-type 136 -j ACCEPT
+ip6tables -A AllowICMP -p icmpv6 --icmpv6-type 151 -j ACCEPT
+ip6tables -A AllowICMP -p icmpv6 --icmpv6-type 152 -j ACCEPT
+ip6tables -A AllowICMP -p icmpv6 --icmpv6-type 153 -j ACCEPT
+ip6tables -A AllowICMP -j DROP
+ip6tables -A INPUT -p icmpv6 -j AllowICMP
+
+iptables -A INPUT -j DROP
+ip6tables -A INPUT -j DROP
